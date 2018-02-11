@@ -9,9 +9,13 @@ import dataset
 import utils
 import time
 import sys
+import argparse
 
 
-def train(train_loader, batch_size, vocab_size):
+use_cuda = torch.cuda.is_available()
+
+
+def train(train_loader, batch_size, vocab_size, bidirectional=None):
     """Run the training loop.
 
     Parameters
@@ -29,11 +33,18 @@ def train(train_loader, batch_size, vocab_size):
     """
     EMBEDDING_DIM = 32
     HIDDEN_DIM = 128
-    LSTM = model.LSTMClassifier(
-        EMBEDDING_DIM,
-        HIDDEN_DIM,
-        vocab_size,
-        batch_size)
+    if bidirectional:
+        LSTM = model.BiLSTMClassifier(
+            EMBEDDING_DIM,
+            HIDDEN_DIM,
+            vocab_size,
+            batch_size)
+    else:
+        LSTM = model.LSTMClassifier(
+            EMBEDDING_DIM,
+            HIDDEN_DIM,
+            vocab_size,
+            batch_size)
     if use_cuda:
         LSTM = LSTM.cuda()
     loss_function = nn.NLLLoss()
@@ -65,6 +76,7 @@ def train(train_loader, batch_size, vocab_size):
             print("%s (%d %d%%) %.4f" % (
                 utils.time_since(start, epoch / n_epochs),
                 epoch, epoch / n_epochs * 100, loss_avg))
+    return LSTM
 
 
 def eval(LSTM, valid_loader, batch_size, vocab, langs):
@@ -83,6 +95,8 @@ def eval(LSTM, valid_loader, batch_size, vocab, langs):
         A dictionary mapping predictions to language names.
 
     """
+    correct = 0
+    n_examples = 0
     for data in valid_loader:
         if use_cuda:
             sentence = Variable(data["sentence"].cuda())
@@ -91,23 +105,34 @@ def eval(LSTM, valid_loader, batch_size, vocab, langs):
             sentence = Variable(data["sentence"])
             label = Variable(data["language"])
         pred = LSTM(sentence)
-        sent_lists = data["sentence"].view(batch_size, -1).tolist()[0]
-        print("Sentence:",
-              (" ").join(utils.words_from_index(vocab, sent_lists)))
         _, topi = pred.data.topk(1)
-        print("Prediction:", langs[int(topi[0])])
-        print("Truth:", langs[int(label[0])])
+        sent_lists = torch.t(data["sentence"]).tolist()
+        for batch_i, sent_list in enumerate(sent_lists):
+            sent = (" ").join(utils.words_from_indices(vocab, sent_list))
+            pred_lang_idx = int(topi[batch_i])
+            true_lang_idx = int(label[batch_i])
+            print("Sentence:", sent)
+            print("Prediction:", langs[pred_lang_idx])
+            print("Truth:", langs[true_lang_idx])
+            n_examples += 1
+            if pred_lang_idx == true_lang_idx:
+                correct += 1
+    print("Correctly predicted {correct} of {examples} [{percent}]%".format(
+        correct=correct, examples=n_examples, percent=100*correct/n_examples))
 
 
 if __name__ == "__main__":
-    langs = {1: "English", 0: "French"}
+    parser = argparse.ArgumentParser(description="Identify English vs French")
+    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--bidirectional", action="store_true")
+    FLAGS = parser.parse_args()
+    langs = {0: "English", 1: "French"}
 
     VALID_SIZE = .2
     BATCH_SIZE = 1
 
-    data_dir = sys.argv[1]
-    train_dset = dataset.sentences(data_dir)
-    valid_dset = dataset.sentences(data_dir)
+    train_dset = dataset.sentences(FLAGS.data_dir)
+    valid_dset = dataset.sentences(FLAGS.data_dir)
 
     train_sampler, valid_sampler = dataset.train_test_samplers(
         VALID_SIZE, len(train_dset))
@@ -119,11 +144,13 @@ if __name__ == "__main__":
 
     print("Successfully loaded data.")
 
-    use_cuda = torch.cuda.is_available()
     if use_cuda:
         print("Found a CUDA-configured GPU.")
     else:
         print("Training on CPU.")
-    LSTM = train(train_loader, BATCH_SIZE, train_dset.vocab.vocab_size)
+    LSTM = train(
+        train_loader,
+        BATCH_SIZE,
+        train_dset.vocab.vocab_size,
+        bidirectional=FLAGS.bidirectional)
     eval(LSTM, valid_loader, BATCH_SIZE, valid_dset.vocab, langs)
-

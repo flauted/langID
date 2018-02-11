@@ -18,12 +18,14 @@ class Vocab:
 
     """
 
-    def __init__(self, name, delims=False):
+    def __init__(self, name, delims=False, pad=True):
         self.name = name
         self.word2index = {}
         self.word2count = {}
         self.index2word = {}
         self.n_words = 0  # count the words recorded
+        if pad:
+            self.add_word("PAD")  # It is necessary that PAD gets 0.
         if delims:
             self.add_word("SOS")
             self.add_word("EOS")
@@ -88,7 +90,7 @@ def indexes_from_sentence(vocab, sentence):
     return [vocab.word2index[word] for word in sentence.split(" ")]
 
 
-def words_from_indexes(vocab, sentence_idx):
+def words_from_indices(vocab, sentence_idx):
     """Convert some words to a list of indices inside the given vocabulary."""
     return [vocab.index2word[idx] for idx in sentence_idx]
 
